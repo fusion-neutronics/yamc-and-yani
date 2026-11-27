@@ -5404,7 +5404,13 @@ class StatisticalChecks:
     @property
     def variance_of_variance_decreasing(self) -> typing.Optional[builtins.bool]: ...
     @property
-    def figure_of_merit_stable(self) -> typing.Optional[builtins.bool]: ...
+    def figure_of_merit_stable(self) -> typing.Optional[builtins.bool]:
+        r"""
+        The figure of merit per history, ``1 / (R² N)``, within a factor of 2
+        over the last half of the run. On a machine doing nothing else this is
+        the wall-time figure of merit over a constant; judging it per history
+        keeps the verdict the same for the same seed on any machine.
+        """
     @property
     def relative_error_rate_ok(self) -> typing.Optional[builtins.bool]:
         r"""
@@ -5414,12 +5420,6 @@ class StatisticalChecks:
     def variance_of_variance_rate_ok(self) -> typing.Optional[builtins.bool]:
         r"""
         Variance of the variance falling as ``1/N`` over the last half of the run.
-        """
-    @property
-    def figure_of_merit_no_trend(self) -> typing.Optional[builtins.bool]:
-        r"""
-        Figure of merit shows no systematic trend with ``N`` over the last half
-        of the run. ``None`` when that half spans under 0.1 s of wall time.
         """
     def summary(self) -> builtins.str:
         r"""

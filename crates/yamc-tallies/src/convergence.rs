@@ -15,8 +15,8 @@ use crate::welford::{hill_tail_slope, merge_top, AggMoments, WelfordWorkerState}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConvergenceLevel {
     /// Relative error below 0.10, the mean stable, the relative error
-    /// decreasing and falling as `1/sqrt(N)`, and the figure of merit
-    /// stable with no trend. Uses only each bin's mean and variance.
+    /// decreasing and falling as `1/sqrt(N)`, and the figure of merit per
+    /// history stable. Uses only each bin's mean and variance.
     Loose,
     /// Loose plus the variance of the variance below 0.10, decreasing and
     /// falling as `1/N`. Keeps each bin's third and fourth moments.
@@ -69,7 +69,6 @@ impl ConvergenceLevel {
             c.relative_error_decreasing,
             c.relative_error_rate_ok,
             c.figure_of_merit_stable,
-            c.figure_of_merit_no_trend,
         ];
         if self.needs_higher_moments() {
             v.extend([
@@ -129,8 +128,8 @@ pub struct ConvergenceStatus {
 #[derive(Debug)]
 pub struct BinConvergence {
     pub level: ConvergenceLevel,
-    /// (histories, transport seconds) of each kept point.
-    points: Vec<(u64, f64)>,
+    /// History count of each kept point.
+    points: Vec<u64>,
     tallies: Vec<TallyHistory>,
     /// Per-bin moments over all histories, rebuilt at each checkpoint.
     scratch: Vec<AggMoments>,
@@ -150,13 +149,13 @@ impl BinConvergence {
         }
     }
 
-    /// Record a checkpoint after `n` histories and `elapsed` transport
-    /// seconds from the workers' per-bin state, and judge every scored bin.
+    /// Record a checkpoint after `n` histories from the workers' per-bin
+    /// state, and judge every scored bin. No clock enters the judgement, so a
+    /// run with the same seed stops at the same point on any machine.
     pub fn checkpoint<'a>(
         &mut self,
         workers: impl Iterator<Item = &'a WelfordWorkerState> + Clone,
         n: u64,
-        elapsed: f64,
     ) -> ConvergenceStatus {
         let Some(first) = workers.clone().next() else {
             return ConvergenceStatus::default();
@@ -171,7 +170,7 @@ impl BinConvergence {
                 })
                 .collect();
         }
-        self.points.push((n, elapsed));
+        self.points.push(n);
         let n_points = self.points.len();
         // Bonferroni family: every bin of every tally is tested together.
         let family: usize = self.tallies.iter().map(|t| t.n_bins).sum();
@@ -226,20 +225,17 @@ impl BinConvergence {
                 any_scored = true;
                 // This bin's history, as a single-bin tally would keep it.
                 self.history.clear();
-                for (p, &(pn, pt)) in self.points.iter().enumerate() {
-                    let r = hist.rel[p * nb + b] as f64;
+                // The checks read neither the time nor the wall-time figure
+                // of merit, so neither is kept.
+                for (p, &pn) in self.points.iter().enumerate() {
                     self.history.push(ConvergencePoint {
                         n_histories: pn,
                         mean: hist.mean[p * nb + b],
-                        relative_error: r,
+                        relative_error: hist.rel[p * nb + b] as f64,
                         variance_of_variance: hist.vov[p * nb + b] as f64,
-                        figure_of_merit: if r > 0.0 && pt > 0.0 {
-                            1.0 / (r * r * pt)
-                        } else {
-                            0.0
-                        },
+                        figure_of_merit: 0.0,
                         tail_slope: 0.0,
-                        elapsed_secs: pt,
+                        elapsed_secs: 0.0,
                     });
                 }
                 let slope = if level.needs_tail() {
@@ -326,7 +322,7 @@ mod tests {
     #[test]
     fn levels_nest_and_parse() {
         let counts: Vec<usize> = ConvergenceLevel::ALL.iter().map(|l| l.n_checks()).collect();
-        assert_eq!(counts, [6, 9, 10]);
+        assert_eq!(counts, [5, 8, 9]);
         for l in ConvergenceLevel::ALL {
             assert_eq!(ConvergenceLevel::from_name(l.name()), Ok(l));
         }
@@ -402,7 +398,7 @@ mod tests {
                     w.finish_history();
                 }
                 done += size;
-                status = monitor.checkpoint(std::iter::once(&w), done, done as f64 * 1e-6);
+                status = monitor.checkpoint(std::iter::once(&w), done);
                 streak = if status.converged { streak + 1 } else { 0 };
                 if streak >= 2 {
                     break;
@@ -414,10 +410,8 @@ mod tests {
         }
     }
 
-    /// Judged on the same histories and timings, a stricter level never
-    /// stops before a looser one: each level only adds checks. (Separate
-    /// runs can stop in any order, as each run's own wall time enters the
-    /// figure-of-merit checks.)
+    /// Judged on the same histories, a stricter level never stops before a
+    /// looser one: each level only adds checks.
     #[test]
     fn stricter_levels_never_stop_first_on_the_same_run() {
         let mut w = WelfordWorkerState::new(&[2]).with_convergence(true, true);
@@ -440,7 +434,7 @@ mod tests {
             }
             done += size;
             for (i, m) in monitors.iter_mut().enumerate() {
-                let s = m.checkpoint(std::iter::once(&w), done, done as f64 * 1e-6);
+                let s = m.checkpoint(std::iter::once(&w), done);
                 streak[i] = if s.converged { streak[i] + 1 } else { 0 };
                 if streak[i] >= 2 && first[i].is_none() {
                     first[i] = Some(done);
@@ -468,7 +462,7 @@ mod tests {
                 w.finish_history();
             }
             done += size;
-            let status = monitor.checkpoint(std::iter::once(&w), done, done as f64 * 1e-6);
+            let status = monitor.checkpoint(std::iter::once(&w), done);
             assert!(!status.converged || chunk < 4, "drift passed at {done}");
         }
     }

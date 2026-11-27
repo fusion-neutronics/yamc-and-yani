@@ -795,11 +795,9 @@ pub struct StatisticalChecks {
     pub variance_of_variance_decreasing: Option<bool>,
     /// Variance of the variance falling as `1/N` over the last half of the run.
     pub variance_of_variance_rate_ok: Option<bool>,
-    /// Figure of merit statistically constant over the last half of the run.
+    /// The figure of merit per history, `1 / (R² N)`, within a factor of 2
+    /// over the last half of the run. See [`fom_per_history`].
     pub figure_of_merit_stable: Option<bool>,
-    /// Figure of merit shows no systematic trend with `N` over the last half
-    /// of the run.
-    pub figure_of_merit_no_trend: Option<bool>,
 }
 
 impl StatisticalChecks {
@@ -827,8 +825,7 @@ impl StatisticalChecks {
         };
         let (mean_stable, relative_error_decreasing, variance_of_variance_decreasing, fom_stable) =
             trend_checks(history, family);
-        let (relative_error_rate_ok, variance_of_variance_rate_ok, figure_of_merit_no_trend) =
-            rate_checks(history);
+        let (relative_error_rate_ok, variance_of_variance_rate_ok) = rate_checks(history);
         Self {
             relative_error_ok: evaluable.then_some(rel < 0.10),
             per_bin_relative_error_ok: None,
@@ -840,12 +837,11 @@ impl StatisticalChecks {
             variance_of_variance_decreasing,
             variance_of_variance_rate_ok,
             figure_of_merit_stable: fom_stable,
-            figure_of_merit_no_trend,
         }
     }
 
     /// The checks in display order: `(label, outcome)`.
-    pub fn items(&self) -> [(&'static str, Option<bool>); 11] {
+    pub fn items(&self) -> [(&'static str, Option<bool>); 10] {
         [
             ("mean stable", self.mean_stable),
             ("relative error < 0.10", self.relative_error_ok),
@@ -868,10 +864,6 @@ impl StatisticalChecks {
                 self.variance_of_variance_rate_ok,
             ),
             ("figure of merit stable", self.figure_of_merit_stable),
-            (
-                "figure of merit has no trend",
-                self.figure_of_merit_no_trend,
-            ),
             ("large-score tail slope > 3", self.tail_slope_ok),
         ]
     }
@@ -938,14 +930,32 @@ fn trend_checks(
     }
     let res: Vec<f64> = half.iter().map(|p| p.relative_error).collect();
     let vovs: Vec<f64> = half.iter().map(|p| p.variance_of_variance).collect();
-    let foms: Vec<f64> = half.iter().map(|p| p.figure_of_merit).collect();
-    let fom_span = half.last().unwrap().elapsed_secs - half.first().unwrap().elapsed_secs;
+    let foms: Vec<f64> = half.iter().map(fom_per_history).collect();
     (
         mean_drift_check(half, family),
         Some(is_non_increasing(&res)),
         Some(is_non_increasing(&vovs)),
-        (fom_span >= FOM_MIN_SPAN_SECS).then(|| is_roughly_constant(&foms)),
+        is_roughly_constant(&foms),
     )
+}
+
+/// The figure of merit per history, `1 / (R² N)`, that the checks judge, or
+/// 0 when the relative error is 0.
+///
+/// The figure of merit is `1 / (R² T)`, and on a machine doing nothing else
+/// the transport time `T` is a constant times `N`, so what the figure of merit
+/// says about the tally is `1 / (R² N)`. Judging that instead of wall time
+/// keeps the verdict, and where a run with no stop condition stops, the same
+/// for the same seed on any machine and under any load. Its trend with `N` is
+/// then the relative error's, which `relative_error_rate_ok` judges.
+fn fom_per_history(p: &ConvergencePoint) -> f64 {
+    let r = p.relative_error;
+    let n = p.n_histories as f64;
+    if r > 0.0 && n > 0.0 {
+        1.0 / (r * r * n)
+    } else {
+        0.0
+    }
 }
 
 /// Fewest last-half snapshots a log-log rate fit is attempted on.
@@ -955,37 +965,22 @@ const RE_SLOPE_RANGE: (f64, f64) = (-0.75, -0.25);
 /// Accepted log-log slope of the variance of the variance against `N`:
 /// `-1 ± 0.5`.
 const VOV_SLOPE_RANGE: (f64, f64) = (-1.5, -0.5);
-/// Largest accepted magnitude of the log-log slope of the figure of merit
-/// against `N`.
-const FOM_SLOPE_MAX: f64 = 0.5;
-/// Least wall-clock time the last half of the run must span before the
-/// figure-of-merit trend is judged. Over shorter spans the time in the FOM is
-/// dominated by warm-up and timer jitter, not by the tally's statistics.
-const FOM_MIN_SPAN_SECS: f64 = 0.1;
 
 /// Rate checks over the last half of the convergence history, fitted as
 /// log-log slopes against the history count `N`. Healthy tallies have a
-/// relative error falling as `N^-0.5`, a variance of the variance falling as
-/// `N^-1`, and a figure of merit with no trend. Returns
-/// `(rel_err_rate_ok, vov_rate_ok, fom_no_trend)`, each `None` when there are
-/// too few usable points (or, for the figure of merit, too little run time).
+/// relative error falling as `N^-0.5` and a variance of the variance falling
+/// as `N^-1`. Returns `(rel_err_rate_ok, vov_rate_ok)`, each `None` when there
+/// are too few usable points.
 ///
 /// Tolerances were set from runs of well-behaved tallies, whose fitted slopes
 /// stay within a few hundredths of the ideal for relative error and within
 /// about 0.25 for the variance of the variance, even with only five points.
-fn rate_checks(h: &[ConvergencePoint]) -> (Option<bool>, Option<bool>, Option<bool>) {
+fn rate_checks(h: &[ConvergencePoint]) -> (Option<bool>, Option<bool>) {
     let half = &h[h.len() / 2..];
     let in_range = |slope: f64, (lo, hi): (f64, f64)| slope >= lo && slope <= hi;
     let re = log_log_slope(half, |p| p.relative_error).map(|s| in_range(s, RE_SLOPE_RANGE));
     let vov = log_log_slope(half, |p| p.variance_of_variance).map(|s| in_range(s, VOV_SLOPE_RANGE));
-    let span = match (half.first(), half.last()) {
-        (Some(a), Some(b)) => b.elapsed_secs - a.elapsed_secs,
-        _ => 0.0,
-    };
-    let fom = (span >= FOM_MIN_SPAN_SECS)
-        .then(|| log_log_slope(half, |p| p.figure_of_merit).map(|s| s.abs() <= FOM_SLOPE_MAX))
-        .flatten();
-    (re, vov, fom)
+    (re, vov)
 }
 
 /// Least-squares slope of `ln(y)` against `ln(n_histories)`, using only points
@@ -1089,7 +1084,9 @@ fn is_non_increasing(v: &[f64]) -> bool {
     v.windows(2).all(|w| w[1] <= w[0] * 1.05 + 1e-300)
 }
 
-fn is_roughly_constant(v: &[f64]) -> bool {
+/// Whether the positive values stay within a factor of 2, or `None` when
+/// there are none (a tally that has not scored has nothing to judge).
+fn is_roughly_constant(v: &[f64]) -> Option<bool> {
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
     for &x in v {
         if x.is_finite() && x > 0.0 {
@@ -1097,7 +1094,7 @@ fn is_roughly_constant(v: &[f64]) -> bool {
             hi = hi.max(x);
         }
     }
-    lo.is_finite() && hi.is_finite() && lo > 0.0 && hi / lo <= 2.0
+    lo.is_finite().then(|| hi / lo <= 2.0)
 }
 
 /// Compute `(shape, dim_labels)` for a tally.
@@ -1759,7 +1756,7 @@ mod tests {
 
     #[test]
     fn mean_trend_does_not_pass_nonfinite_block_statistics() {
-        let mut points = history(|_| 0.01, |_| 0.01, |_| 1.0, 1.0);
+        let mut points = history(|_| 0.01, |_| 0.01, 1.0);
         for (index, point) in points.iter_mut().enumerate() {
             point.mean = if index % 2 == 0 { 1.0e200 } else { -1.0e200 };
         }
@@ -1792,61 +1789,67 @@ mod tests {
         assert_eq!(c.figure_of_merit_stable, Some(true));
     }
 
-    /// A ten-snapshot history whose relative error, variance of the variance
-    /// and figure of merit follow `re(N)`, `vov(N)`, `fom(N)`, with
-    /// `secs_per_snapshot` of wall time between snapshots.
+    /// A ten-snapshot history whose relative error and variance of the
+    /// variance follow `re(N)` and `vov(N)`, with `secs_per_snapshot` of wall
+    /// time between snapshots and the wall-time figure of merit to match.
     fn history(
         re: impl Fn(f64) -> f64,
         vov: impl Fn(f64) -> f64,
-        fom: impl Fn(f64) -> f64,
         secs_per_snapshot: f64,
     ) -> Vec<ConvergencePoint> {
         (1..=10)
             .map(|i| {
                 let n = i as f64 * 1000.0;
+                let secs = i as f64 * secs_per_snapshot;
                 ConvergencePoint {
                     n_histories: n as u64,
                     mean: 2.0,
                     relative_error: re(n),
                     variance_of_variance: vov(n),
-                    figure_of_merit: fom(n),
+                    figure_of_merit: 1.0 / (re(n) * re(n) * secs),
                     tail_slope: 8.0,
-                    elapsed_secs: i as f64 * secs_per_snapshot,
+                    elapsed_secs: secs,
                 }
             })
             .collect()
     }
 
-    /// Ideal `1/sqrt(N)` relative error, `1/N` variance of the variance and a
-    /// constant figure of merit pass all three rate checks.
+    /// Ideal `1/sqrt(N)` relative error and `1/N` variance of the variance
+    /// pass both rate checks, with the figure of merit per history constant.
     #[test]
     fn rate_checks_pass_for_ideal_scaling() {
         let mut r = flux_result();
-        r.convergence_history = history(|n| 3.0 / n.sqrt(), |n| 10.0 / n, |_| 100.0, 1.0);
+        r.convergence_history = history(|n| 3.0 / n.sqrt(), |n| 10.0 / n, 1.0);
         let c = r.statistical_checks();
         assert_eq!(c.relative_error_rate_ok, Some(true));
         assert_eq!(c.variance_of_variance_rate_ok, Some(true));
-        assert_eq!(c.figure_of_merit_no_trend, Some(true));
+        assert_eq!(c.figure_of_merit_stable, Some(true));
     }
 
+    /// The checks read the tally, never the clock: the same history, whatever
+    /// its timings, gets the same verdict, so a run stops at the same point on
+    /// a fast, slow or busy machine.
     #[test]
-    fn both_fom_checks_ignore_short_timer_spans() {
-        let mut result = flux_result();
-        result.convergence_history = history(
-            |count| 3.0 / count.sqrt(),
-            |count| 10.0 / count,
-            |count| count.powi(4),
-            0.001,
+    fn checks_ignore_wall_time() {
+        let verdict = |secs: &dyn Fn(usize) -> f64| {
+            let mut r = flux_result();
+            r.convergence_history = history(|n| 3.0 / n.sqrt(), |n| 10.0 / n, 1.0);
+            for (i, p) in r.convergence_history.iter_mut().enumerate() {
+                p.elapsed_secs = secs(i);
+                p.figure_of_merit = 1.0 / (p.relative_error * p.relative_error * p.elapsed_secs);
+            }
+            r.statistical_checks().items()
+        };
+        let steady = verdict(&|i| (i + 1) as f64);
+        assert_eq!(steady, verdict(&|i| (i + 1) as f64 * 1e-6));
+        // A machine that slows to a crawl halfway through the run.
+        assert_eq!(steady, verdict(&|i| ((i + 1) as f64).powi(4)));
+        assert_eq!(
+            steady
+                .iter()
+                .find(|(name, _)| *name == "figure of merit stable"),
+            Some(&("figure of merit stable", Some(true)))
         );
-        let checks = result.statistical_checks();
-        assert_eq!(checks.figure_of_merit_stable, None);
-        assert_eq!(checks.figure_of_merit_no_trend, None);
-        for point in &mut result.convergence_history {
-            point.elapsed_secs *= 1_000.0;
-        }
-        let checks = result.statistical_checks();
-        assert_eq!(checks.figure_of_merit_stable, Some(false));
-        assert_eq!(checks.figure_of_merit_no_trend, Some(false));
     }
 
     /// A relative error and variance of the variance that stall (as when a
@@ -1855,8 +1858,7 @@ mod tests {
     #[test]
     fn rate_checks_fail_when_relative_error_and_vov_stall() {
         let mut r = flux_result();
-        r.convergence_history =
-            history(|n| 0.5 / n.powf(0.1), |n| 0.5 / n.powf(0.2), |_| 100.0, 1.0);
+        r.convergence_history = history(|n| 0.5 / n.powf(0.1), |n| 0.5 / n.powf(0.2), 1.0);
         let c = r.statistical_checks();
         assert_eq!(c.relative_error_decreasing, Some(true));
         assert_eq!(c.relative_error_rate_ok, Some(false));
@@ -1865,30 +1867,34 @@ mod tests {
         assert!(!c.passed());
     }
 
-    /// A figure of merit falling as `1/N` fails the trend check.
+    /// A large score landing late doubles the relative error at one
+    /// snapshot: the figure of merit per history drops fourfold, and is not
+    /// stable.
     #[test]
-    fn rate_checks_fail_when_figure_of_merit_drifts() {
+    fn figure_of_merit_unstable_when_a_large_score_lands() {
         let mut r = flux_result();
-        r.convergence_history = history(|n| 3.0 / n.sqrt(), |n| 10.0 / n, |n| 1e6 / n, 1.0);
-        let c = r.statistical_checks();
-        assert_eq!(c.figure_of_merit_no_trend, Some(false));
+        r.convergence_history = history(|n| 3.0 / n.sqrt(), |n| 10.0 / n, 1.0);
+        r.convergence_history[7].relative_error *= 2.0;
+        assert_eq!(r.statistical_checks().figure_of_merit_stable, Some(false));
     }
 
-    /// The figure-of-merit trend is not judged when the last half of the run
-    /// spans too little wall time, and no rate check is judged with too few
-    /// snapshots.
+    /// A tally that has not scored leaves the figure-of-merit check unjudged,
+    /// as it does the relative-error checks, rather than failing it.
+    #[test]
+    fn figure_of_merit_not_judged_before_anything_scores() {
+        let mut r = flux_result();
+        r.convergence_history = history(|_| 0.0, |_| 0.0, 1.0);
+        assert_eq!(r.statistical_checks().figure_of_merit_stable, None);
+    }
+
+    /// No rate check is judged with too few snapshots.
     #[test]
     fn rate_checks_not_evaluated_on_short_runs() {
         let mut r = flux_result();
-        r.convergence_history = history(|n| 3.0 / n.sqrt(), |n| 10.0 / n, |n| 1e6 / n, 1e-3);
-        let c = r.statistical_checks();
-        assert_eq!(c.figure_of_merit_no_trend, None);
-        assert_eq!(c.relative_error_rate_ok, Some(true));
-
+        r.convergence_history = history(|n| 3.0 / n.sqrt(), |n| 10.0 / n, 1.0);
         r.convergence_history.truncate(6);
         let c = r.statistical_checks();
         assert_eq!(c.relative_error_rate_ok, None);
         assert_eq!(c.variance_of_variance_rate_ok, None);
-        assert_eq!(c.figure_of_merit_no_trend, None);
     }
 }

@@ -544,13 +544,19 @@ The checks passed are: relative error below 0.1, in total and in every
 populated bin, VoV below 0.1, tail slope above 3, and, over the second half of
 the run, a mean that is not trending (a 95% Student-t test on the slope of the
 means of the blocks of histories between snapshots), relative error and VoV
-that do not grow, a FOM that stays within a factor of 2,
-a relative error falling as $1/\sqrt{N}$ (a log-log slope between $-0.75$ and
-$-0.25$), a VoV falling as $1/N$ (a slope between $-1.5$ and $-0.5$) and a FOM
-with no trend in $N$ (a slope within $\pm 0.5$). The three rate checks read as
-not evaluated with fewer than four snapshots in that half, and both FOM checks
-also when the half spans less than 0.1 s. A tally passes only if its tail slope
-could be estimated.
+that do not grow, a FOM per history, $1/(R^2 N)$, that stays within a factor
+of 2, a relative error falling as $1/\sqrt{N}$ (a log-log slope between $-0.75$
+and $-0.25$) and a VoV falling as $1/N$ (a slope between $-1.5$ and $-0.5$).
+The two rate checks read as not evaluated with fewer than four snapshots in
+that half. A tally passes only if its tail slope could be estimated.
+
+The checks judge the FOM per history, not the reported wall-time one. On a
+machine doing nothing else $t$ is proportional to $N$, so the two carry the
+same information about the tally, but wall time also moves with the machine's
+speed and load. Judged per history, the verdict, and where a run with no stop
+condition stops, are the same for the same seed on any machine. The FOM's
+trend in $N$ is then the relative error's, which the $1/\sqrt{N}$ check
+judges.
 
 A run can stop early on convergence targets: a relative error, standard
 deviation or VoV threshold, on all tallies or a named one. Targets are checked
