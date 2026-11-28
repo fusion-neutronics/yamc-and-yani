@@ -648,8 +648,9 @@ An invalid version fails the release before any wheel is built.
 The flow is therefore:
 
 1. Merge to `main`. No version bump is needed in the PR.
-2. For a yamc release, run the V&V release check on that commit (see
-   [Before tagging a yamc release](#before-tagging-a-yamc-release)) and review
+2. Run the V&V release check of each code you release on that commit (see
+   [Before tagging a yamc release](#before-tagging-a-yamc-release) and
+   [Before tagging a yani release](#before-tagging-a-yani-release)) and review
    what it flags.
 3. Tag with the versions to release and publish the GitHub release.
 4. `.github/workflows/ci-python.yml` writes those versions into the
@@ -683,6 +684,30 @@ release; it needs the nuclear data the V&V repository describes. The check only
 reports: review what it flags and decide whether to release. Once the release
 is out, publish a V&V run of it (`vv publish`), so the next release is checked
 against this one.
+
+### Before tagging a yani release
+
+Run the release check of
+[yani-verification-and-validation](https://github.com/fusion-neutronics/yani-verification-and-validation)
+on the commit you mean to tag, from a checkout of that repository beside this
+one:
+
+```bash
+vv run --release-check yani@<commit>
+```
+
+It builds yani at that commit from this checkout (`../yamc-and-yani`, or
+`$YANI_CORE_ROOT`) and solves the IAEA CoNDERC FNS decay-heat and
+effective cross-section benchmarks (497 cases) on TENDL-2017 with UKAEA's
+decay_2012 decay data, the data the archive's reference calculation used. It
+takes about half an hour once yani is built and needs no data beyond what yani
+fetches. Every case is compared with the measurement and the archive's
+reference calculation, and the check lists every case that moved more than 0.1
+percentage point further from either than in the last published V&V run.
+Neither reference is assumed right, so a move away is either a regression or a
+sign that the reference is wrong there, and the release notes should say which.
+The check only reports. Once the release is out, publish a V&V run of it
+(`vv publish`), so the next release is checked against this one.
 
 ### The Pyodide wheels
 
