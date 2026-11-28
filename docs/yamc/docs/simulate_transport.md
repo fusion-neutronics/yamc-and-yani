@@ -84,12 +84,12 @@ results = model.simulate_transport(convergence="strict")   # every check, every 
 Choosing a level:
 
 - ``"loose"`` uses only each bin's mean and error. It is the quickest, but a rarely sampled large score can leave the relative error looking settled while it is not.
-- ``"standard"`` adds the variance of the variance, which catches exactly that: an error estimate that is itself unreliable. It keeps two more numbers per bin per thread (16 bytes).
-- ``"strict"`` adds the tail slope of each bin's score distribution, which needs each bin's 201 largest scores: about 1.6 KiB per scored bin per thread. That is fine for cell and spectrum tallies; for a mesh of a million voxels on 16 threads it is about 26 GB.
+- ``"standard"`` adds the variance of the variance, which catches exactly that: an error estimate that is itself unreliable. It keeps two more numbers per bin per thread (16 bytes). When large scores are rare, as deep in a shield, it can still stop while the error is a little low: on synthetic scores where 1% of histories scored, 9% of the answers fell outside ±2 standard errors, against 5% for honest ones.
+- ``"strict"`` adds the tail slope of each bin's score distribution, which waits for those rare large scores: on the same scores it stopped about 35 times later, with every answer inside ±2 standard errors. It needs each bin's 201 largest scores: about 1.6 KiB per scored bin per thread. That is fine for cell and spectrum tallies; for a mesh of a million voxels on 16 threads it is about 26 GB.
 
 ``convergence=`` only applies when no other stop condition is set, and combining it with ``total_particles``, ``max_runtime`` or convergence targets raises ``ValueError``.
 
-The checks read the tallies alone, never the clock, so a run with the same seed stops after the same number of histories on any machine and under any load. They are made at checkpoints every ~25% more histories, and the progress output names the level and how many checks the slowest bin passes, with an ETA projected from the slowest bin:
+The checks read the tallies alone, never the clock, so a run with the same seed stops after the same number of histories on any machine and under any load. They are made at checkpoints every ~25% more histories, and a bin counts as converged only once the last half of its history holds seven of them, so the trend checks have enough points to catch a mean still moving; the earliest a run can stop is 3,721 histories, and the progress output names the level and how many checks the slowest bin passes, with an ETA projected from the slowest bin:
 
 ```text
 No stop condition set: running until every scored bin passes the standard statistical checks (8).

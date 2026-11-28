@@ -798,7 +798,8 @@ pub struct StatisticalChecks {
     /// Variance of the variance falling as `1/N` over the last half of the run.
     pub variance_of_variance_rate_ok: Option<bool>,
     /// The figure of merit per history, `1 / (R² N)`, within a factor of 2
-    /// over the last half of the run. See [`fom_per_history`].
+    /// over the last half of the run, so the verdict does not depend on how
+    /// fast the machine ran.
     pub figure_of_merit_stable: Option<bool>,
 }
 
@@ -1913,12 +1914,15 @@ mod tests {
         assert_eq!(r.statistical_checks().figure_of_merit_stable, Some(false));
     }
 
-    /// A tally that has not scored leaves the figure-of-merit check unjudged,
-    /// as it does the relative-error checks, rather than failing it.
+    /// A tally that has not scored leaves the figure-of-merit check unjudged
+    /// rather than failing it.
     #[test]
     fn figure_of_merit_not_judged_before_anything_scores() {
         let mut r = flux_result();
         r.convergence_history = history(|_| 0.0, |_| 0.0, 1.0);
+        for p in &mut r.convergence_history {
+            p.mean = 0.0;
+        }
         assert_eq!(r.statistical_checks().figure_of_merit_stable, None);
     }
 

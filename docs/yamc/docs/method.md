@@ -548,13 +548,16 @@ that do not grow, a FOM per history, $1/(R^2 N)$, that stays within a factor
 of 2, a relative error falling as $1/\sqrt{N}$ (a log-log slope between $-0.75$
 and $-0.25$) and a VoV falling as $1/N$ (a slope between $-1.5$ and $-0.5$).
 The two rate checks read as not evaluated with fewer than four snapshots in
-that half. A tally passes only if its tail slope could be estimated.
+that half. A tally passes only if its tail slope could be estimated. A run
+with no stop condition counts a bin as converged only once that half holds
+seven snapshots, so the mean test has four degrees of freedom.
 
 The checks judge the FOM per history, not the reported wall-time one. On a
 machine doing nothing else $t$ is proportional to $N$, so the two carry the
 same information about the tally, but wall time also moves with the machine's
-speed and load. Judged per history, the verdict, and where a run with no stop
-condition stops, are the same for the same seed on any machine. The FOM's
+speed and load. Judged per history, the same histories get the same verdict on
+any machine, and a run with no stop condition stops at the same point for the
+same seed. The FOM's
 trend in $N$ is then the relative error's, which the $1/\sqrt{N}$ check
 judges.
 

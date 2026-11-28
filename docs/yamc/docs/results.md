@@ -91,7 +91,7 @@ Tally-level reliability scalars, computed from the per-history *total* score:
 | ``aggregate_skewness`` / ``aggregate_kurtosis`` | shape of the history-score distribution |
 | ``aggregate_tail_slope`` | slope of the large-score PDF tail; the variance is well-defined only when this exceeds 3 |
 
-The checks read the tally alone, never the clock, so the same seed gives the same verdict on any machine. The figure-of-merit check judges the figure of merit per history, ``1 / (R² N)``, not the wall-time ``figure_of_merit`` printed above. The two differ by the time per history, a constant on a machine doing nothing else.
+The checks read the tally alone, never the clock, so the same histories get the same verdict on any machine. The figure-of-merit check judges each ``convergence_history`` point's figure of merit per history, ``1 / (R² N)``, not its wall-time ``figure_of_merit``, ``1 / (R² t)``. The two differ by the time per history, a constant on a machine doing nothing else.
 
 The ``statistical_checks`` object gives the pass/fail verdict, and ``convergence_history`` records the statistics versus number of histories:
 

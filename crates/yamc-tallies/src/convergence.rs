@@ -93,6 +93,14 @@ impl ConvergenceLevel {
 /// dropped, so the history keeps spanning the whole run in log N.
 const MAX_POINTS: usize = 64;
 
+/// Fewest points the last half of the history, which the trend checks read,
+/// must hold before a bin can count as converged. With seven, the mean-drift
+/// test has four degrees of freedom (a critical t of 2.8); at the first
+/// checkpoints it has one or two (12.7 or 4.3) and passes a mean that is
+/// still moving. MCNP's checks read the ten entries in the last half of its
+/// twenty-entry fluctuation chart.
+const MIN_LAST_HALF_POINTS: usize = 7;
+
 /// The required relative error and variance of the variance, used to
 /// project how many histories a bin still needs.
 const THRESHOLD: f64 = 0.10;
@@ -266,6 +274,9 @@ impl BinConvergence {
         }
         if let Some(needed) = status.needed.as_mut() {
             *needed = worst_needed;
+        }
+        if n_points - n_points / 2 < MIN_LAST_HALF_POINTS {
+            status.converged = false;
         }
         if n_points > MAX_POINTS {
             self.thin();
@@ -448,22 +459,46 @@ mod tests {
         assert!(first[0] <= first[1] && first[1] <= first[2], "{first:?}");
     }
 
-    /// A bin whose score keeps drifting never converges.
+    /// A bin whose score keeps drifting never stops a run, however slow the
+    /// drift: no two checkpoints in a row count it as converged.
     #[test]
     fn a_drifting_bin_does_not_converge() {
+        for drift in [2e-4, 5e-4, 1e-3] {
+            let mut w = WelfordWorkerState::new(&[1]).with_convergence(true, false);
+            let mut monitor = BinConvergence::new(ConvergenceLevel::Standard);
+            let mut done = 0u64;
+            let mut streak = 0;
+            for _ in 0..40 {
+                let size = (done / 4).clamp(100, 100_000);
+                for h in 0..size {
+                    let x = (done + h) as f64 * drift + (h % 7) as f64;
+                    w.add_contribution(0, 0, x);
+                    w.finish_history();
+                }
+                done += size;
+                let status = monitor.checkpoint(std::iter::once(&w), done);
+                streak = if status.converged { streak + 1 } else { 0 };
+                assert!(streak < 2, "a drift of {drift} stopped the run at {done}");
+            }
+        }
+    }
+
+    /// No bin counts as converged before the last half of its history holds
+    /// enough points for the trend checks to have power.
+    #[test]
+    fn no_bin_converges_before_the_trend_checks_have_points() {
         let mut w = WelfordWorkerState::new(&[1]).with_convergence(true, false);
         let mut monitor = BinConvergence::new(ConvergenceLevel::Standard);
         let mut done = 0u64;
-        for chunk in 0..40 {
-            let size = (done / 4).clamp(100, 100_000);
+        for point in 1..=12 {
+            let size = (done / 4).max(100);
             for h in 0..size {
-                let x = (done + h) as f64 * 1e-3 + (h % 7) as f64;
-                w.add_contribution(0, 0, x);
+                w.add_contribution(0, 0, 1.0 + (h % 3) as f64);
                 w.finish_history();
             }
             done += size;
             let status = monitor.checkpoint(std::iter::once(&w), done);
-            assert!(!status.converged || chunk < 4, "drift passed at {done}");
+            assert!(!status.converged, "converged at point {point}");
         }
     }
 }
