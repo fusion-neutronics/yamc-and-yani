@@ -134,6 +134,33 @@ let generation run to its convergence target: with ``max_runtime`` capping
 generation, a small ``N`` looks cheap only because its passes stop before they
 converge.
 
+### What generation did
+
+The windows ``generate_weight_windows`` returns carry a ``generation`` dict
+saying how they were made. Windows built by hand, and the copies
+``model.variance_reduction`` returns, give ``None``:
+
+<!-- doctest: skip -->
+```python
+g = windows.generation
+if g is not None:
+    print(g["density_reduction"], g["optical_depth"])  # N, and the tau behind an automatic N
+    for name in ("fiducial", "asymptotic"):
+        p = g[name]
+        print(name, p["n_histories"], p["stop_reason"], p["transport_time"], p["bin_relative_error"])
+```
+
+``optical_depth`` is ``None`` when ``density_reduction`` was given.
+``bin_relative_error`` is the relative error that 95% of this particle's
+scored window-mesh bins reached, the quantity ``relative_error`` stops a pass
+on. A pass that stopped on ``"total_particles"`` or ``"max_runtime"`` with
+``bin_relative_error`` above the target built the windows from a flux field
+that had not converged, and the voxels it had not reached get no window (a
+negative lower bound). ``n_histories`` and ``transport_time`` show which pass
+the generation time went to. Each pass also has ``weight_window_stats``, as on
+``TransportResults``: ``None`` for the fiducial pass, which runs without
+windows, and what the fiducial windows did for the asymptotic pass.
+
 ## Applying windows directly
 
 If you already have bounds (e.g. from a previous generation, via
@@ -227,6 +254,26 @@ Three things also print a warning, whatever the ``verbose`` setting:
   the source: the windows then do nothing.
 
 The split budget is not a setting: the warnings point at the windows instead.
+
+## Judging windows
+
+Windows change only the variance and the cost, never the mean. A run with windows that disagrees with an analog run by more than its statistics is a bug, so report it. Everything else comes down to whether the windows put particles where the tally needs them, at a cost worth paying. Read the diagnostics in this order.
+
+**Before the run.** ``model.weight_window_warnings()`` lists windows that cannot work: windows far above or below the source weight, energy bins that miss the source, and a ``weight_floor`` above some windows. ``windows.window(position, energy)`` gives the window at any point, and ``windows.to_vtkhdf(...)`` shows the whole map in ParaView next to the geometry. A voxel without a window (a negative lower bound, NaN in the file) leaves particles there analog.
+
+**After generation.** ``windows.generation`` says whether each DeGVR pass converged. If a pass stopped on ``"total_particles"`` or ``"max_runtime"`` with ``bin_relative_error`` above the target, it built the windows from a field that had not converged, and the deep voxels it never reached have no window. Run generation longer before judging the windows.
+
+**After the run.** ``results.weight_window_stats`` says what the windows did:
+
+| Sign | Likely cause | What to change |
+|---|---|---|
+| Large ``no_window`` share of collisions | the mesh or energy bins miss where particles go, or voxels have no window | the window mesh, or a longer generation |
+| ``histories_at_split_budget`` above a few percent (the run warns at 5%) | windows falling faster than the flux, or far below the source weight | regenerate the windows, or use a coarser window mesh |
+| ``splits_capped_at_max_split`` a large share of ``split_events`` | neighbouring windows differ by more than ``max_split``, or windows lag where particles stream | a finer window mesh |
+| ``weight_floor_roulettes`` above zero | ``weight_floor`` above some windows | lower ``weight_floor`` |
+| ``particles`` per history far above analog with no gain at depth | windows splitting where the tally does not need it | windows built for this tally's region |
+
+**Is it worth it?** Compare the per-bin ``relative_error`` and ``figure_of_merit`` in the region you care about, not the ``aggregate_figure_of_merit``, which the bins near the source dominate. The figure of merit drifts with run length, because each run has a fixed overhead: in a test model it rose about four times from 10,000 to a million histories. So compare runs of similar length, on the same machine.
 
 ## Photon sources
 
