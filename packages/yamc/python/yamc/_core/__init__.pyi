@@ -3534,6 +3534,15 @@ class Model:
             ``variance_reduction=[ww]``; pass a returned list straight through as
             ``variance_reduction=windows``.
         """
+    def weight_window_warnings(self) -> builtins.list[builtins.str]:
+        r"""
+        Problems with the model's weight windows that show before any transport,
+        as the messages a run prints as warnings: windows that sit more than ten
+        times below or above the source weight where most source particles are
+        born, energy bins that miss most source particles, and a weight floor
+        above some lower bounds. An empty list when there is nothing to say;
+        ``ValueError`` when a run would refuse the model.
+        """
     def estimate_density_reduction(self, generator: WeightWindowGeneratorDeGVR) -> tuple[builtins.float, builtins.float]:
         r"""
         Estimate the auto DeGVR density-reduction factor N and the optical depth
@@ -5919,8 +5928,9 @@ class Tally:
                 A surface tally takes ``energy_bins`` (the crossing energy),
                 ``cosine_bins``, ``particle`` and an energy function, and no cells,
                 materials, mesh, nuclides, response or estimator. It needs surface
-                tracking (not ``"woodcock"`` or ``"hybrid"``) and CSG surfaces, and
-                runs on the CPU. Units are particles per source particle.
+                tracking (not ``"woodcock"`` or ``"hybrid"``) and CSG surfaces. It
+                also runs with ``compute="gpu"``, except with ``cosine_bins``. Units
+                are particles per source particle.
             cosine_bins (list[float], optional): Bin a surface tally by the cosine of
                 the angle between the particle's direction and the surface normal at
                 the crossing, the normal pointing to ``.above`` (outwards on a
@@ -6216,7 +6226,11 @@ class TallyResult:
     @property
     def aggregate_figure_of_merit(self) -> builtins.float:
         r"""
-        Tally-level scalar figure of merit of the integrated response.
+        Figure of merit of the tally total, ``1 / (aggregate_relative_error**2
+        * elapsed_secs)``, so it keeps the correlation between bins that one
+        history scores together. Results without the per-history total (MPI
+        runs, results read back with ``from_arrow``) sum the per-bin variances
+        instead, which overstates it for a mesh tally.
         """
     @property
     def aggregate_mean(self) -> builtins.float:
@@ -6711,6 +6725,12 @@ class TransmutationResults:
         True, ``library`` and ``release`` the library and ``data_version`` its
         converter recorded, and ``manifest_sha256`` the sha256 of its files.
         For a release ``locally_processed`` is False and ``library`` empty.
+        ``citations`` is what to cite for the library's data, a list of dicts
+        with ``reference`` and ``doi`` (the references its makers ask for), and
+        ``terms`` what its data is redistributed under; both are empty for a
+        library converted under a name of its own. Cite every library a
+        calculation read: see "Cite the nuclear data you use" on the nuclear
+        data libraries page.
         """
     @property
     def num_steps(self) -> builtins.int:
@@ -8231,6 +8251,15 @@ class TransportResults:
         ``None`` for combined / reloaded results.
         """
     @property
+    def stop_reason(self) -> typing.Optional[builtins.str]:
+        r"""
+        Why the run stopped: ``"total_particles"`` (it ran every history),
+        ``"max_runtime"``, ``"convergence_targets"`` (every target was met) or
+        ``"statistical_checks"`` (with no stop condition, every scored bin
+        passed the statistical checks). ``None`` for GPU runs, and for combined
+        or reloaded results.
+        """
+    @property
     def weight_window_stats(self) -> typing.Optional[dict]:
         r"""
         What the weight windows did in this run, as a dict of counts, or
@@ -8253,9 +8282,10 @@ class TransportResults:
           unbiased, but what those histories reach last gets fewer, heavier
           particles.
         - ``roulette_kills`` and ``roulette_survivals``.
-        - ``weight_floor_kills`` and ``weight_floor_weight``: particles killed
-          below ``weight_floor`` and the weight they carried, summed over the
-          run. A kill at the floor is not a roulette, so any biases tallies low.
+        - ``weight_floor_roulettes`` and ``weight_floor_kills``: roulettes played
+          below ``weight_floor``, and the particles they killed. The roulette
+          keeps tallies unbiased, but a floor that plays at all sits above some
+          windows and overrides them there.
         """
     @property
     def runs(self) -> list:
@@ -8281,8 +8311,13 @@ class TransportResults:
         (every build that wrote the release's files, as its manifest lists
         them: the package, its version and the core commit it was compiled
         from, e.g. ``["yani-python 0.22.1 (core 250c439e...)"]``; empty for a
-        release published before releases recorded them). Empty when all data
-        came from local directories that are not release folders.
+        release published before releases recorded them), ``citations`` (what
+        to cite for the library's data: a list of dicts with ``reference`` and
+        ``doi``, the references its makers ask for) and ``terms`` (what its
+        data is redistributed under). Cite every library a run read: see
+        "Cite the nuclear data you use" on the nuclear data libraries page.
+        Empty when all data came from local directories that are not release
+        folders.
         """
     def __len__(self) -> builtins.int:
         r"""
@@ -8497,7 +8532,8 @@ class WeightWindowBounds:
     weight exceeds the local upper bound is split into equal-weight copies
     (capped by ``max_split``), one at or below the lower bound plays Russian
     roulette (survivor weight ``survival_factor * lower``), and one below
-    ``weight_floor`` is killed. Bounds are given per (energy group, voxel),
+    ``weight_floor`` plays roulette with the floor as its survivor weight.
+    Bounds are given per (energy group, voxel),
     flat, indexed ``group * num_voxels + voxel``; a negative lower bound is
     the "no window" sentinel. Add to ``Model(variance_reduction=[...])``; one
     entry per particle type is allowed, and two for the same particle is
@@ -8520,18 +8556,21 @@ class WeightWindowBounds:
         particle: ``"neutron"`` (default) or ``"photon"``.
         survival_factor: Roulette survivor weight = factor * lower (default 3).
         max_split: Maximum copies produced in one split event (default 10).
-        weight_floor: Absolute weight floor below which a particle is killed
-            (default 1e-38).
+        weight_floor: Absolute weight below which a particle plays roulette
+            with the floor as its survivor weight (default 1e-38).
     """
     @property
     def lower_bounds(self) -> builtins.list[builtins.float]:
         r"""
-        Lower window bounds, flat over (group, voxel).
+        Lower window bounds, flat over (group, voxel): index
+        ``group * mesh.num_bins + voxel``, with ``voxel = (iz * ny + iy) * nx +
+        ix``, so ``numpy.reshape(lower_bounds, (n_groups, nz, ny, nx))`` lays
+        them out on the mesh. A negative bound marks a voxel without a window.
         """
     @property
     def upper_bounds(self) -> builtins.list[builtins.float]:
         r"""
-        Upper window bounds, flat over (group, voxel).
+        Upper window bounds, laid out as ``lower_bounds``.
         """
     @property
     def particle(self) -> builtins.str:
@@ -8551,10 +8590,34 @@ class WeightWindowBounds:
     @property
     def weight_floor(self) -> builtins.float:
         r"""
-        Absolute weight floor below which a particle is killed.
+        Absolute weight below which a particle plays roulette, the floor being
+        its survivor weight.
+        """
+    @property
+    def mesh(self) -> RegularRectangularMesh:
+        r"""
+        The mesh the windows are defined on.
+        """
+    @property
+    def energy_bins(self) -> typing.Optional[builtins.list[builtins.float]]:
+        r"""
+        Energy group edges in eV, or ``None`` for one group spanning all
+        energies.
         """
     def __new__(cls, mesh: RegularRectangularMesh, lower_bounds: typing.Sequence[builtins.float], upper_bounds: typing.Optional[typing.Sequence[builtins.float]] = None, ratio: builtins.float = 5.0, energy_bins: typing.Optional[typing.Sequence[builtins.float]] = None, particle: builtins.str = 'neutron', survival_factor: builtins.float = 3.0, max_split: builtins.int = 10, weight_floor: builtins.float = 1e-38) -> WeightWindowBounds: ...
+    def window(self, position: typing.Sequence[builtins.float], energy: builtins.float) -> typing.Optional[tuple[builtins.float, builtins.float]]:
+        r"""
+        The window a particle at ``position`` with ``energy`` gets, as
+        ``(lower, upper)``, or ``None`` where it gets none: outside the mesh or
+        the energy bins, or in a voxel without a window.
+        
+        Args:
+            position: ``(x, y, z)`` in cm.
+            energy: Energy in eV.
+        """
     def __repr__(self) -> builtins.str: ...
+    def to_vtkhdf(self, filename: builtins.str, *, length_units: typing.Literal["mm", "cm", "m", "km"] = "cm") -> None:
+        r"""Write the lower and upper bounds to a VTK-HDF ImageData file for ParaView, one pair of arrays per energy group, NaN where a voxel has no window. Requires h5py (pip install yamc[viz])."""
 
 @typing.final
 class WeightWindowGeneratorDeGVR:
@@ -9451,7 +9514,8 @@ def generate_library(keyword: builtins.str, path: builtins.str, *, parts: typing
     ----------
     keyword : str
         The library: ``"endf-b8.1"``, ``"jeff-4.0"``, ``"jendl-5.0"``,
-        ``"tendl-2025"``, ``"tendl-2017"``, ``"fendl-3.2d"`` or ``"irdff-ii"``.
+        ``"tendl-2025"``, ``"tendl-2017"``, ``"fendl-3.2d"``, ``"irdff-ii"``,
+        ``"ukdd-2012"``, ``"ukdd-2020"`` or ``"ukfy-4.2"``.
     path : str
         The folder to build in, created if absent. It must be new, empty or an
         earlier build of the same library, and not inside :func:`cache_dir`.
@@ -9920,6 +9984,9 @@ def set_transmutation_decay_data(value: typing.Optional[builtins.str]) -> None:
     Every transmutation and decay quantity (activity, decay heat, dose) reads
     it, and there is no default library, so one with it unset is refused
     before any work, naming the setting. Pass ``None`` to unset it.
+    
+    ``"ukdd-2012"`` and ``"ukdd-2020"``, UKAEA's decay_2012 and decay_2020,
+    supply decay data only, so this is the one setting that takes them.
     """
 
 def set_transmutation_fission_yields(value: typing.Optional[builtins.str | typing.Literal[False]]) -> None:
@@ -9929,6 +9996,8 @@ def set_transmutation_fission_yields(value: typing.Optional[builtins.str | typin
     Pass a library keyword or a path to choose one. An irradiation reads it,
     and there is no default library, so one with it unset is refused before
     any work, naming the setting. Pass ``None`` to unset it.
+    ``"ukfy-4.2"``, the UKFY-4.2 neutron-induced yields, supplies fission
+    yields only, so this is the one setting that takes it.
     
     Pass ``False`` to turn the subsection off, which is the honest setting for
     a material nothing in which fissions and for a library that publishes no

@@ -57,6 +57,46 @@ def test_weight_window_bounds_validation():
         yamc.WeightWindowBounds(mesh=mesh, lower_bounds=[0.1] * 8, ratio=0.9)
 
 
+def test_window_read_back(tmp_path):
+    # Two voxels along x, two energy groups, the second voxel of the first
+    # group without a window.
+    mesh = yamc.RegularRectangularMesh(lower_left=[0, 0, 0], upper_right=[2, 1, 1], shape=[2, 1, 1])
+    edges = [0.0, 1.0e3, 2.0e7]
+    ww = yamc.WeightWindowBounds(
+        mesh=mesh, lower_bounds=[0.5, -1.0, 0.1, 0.2], ratio=5.0, energy_bins=edges
+    )
+    assert list(ww.mesh.shape) == [2, 1, 1]
+    assert list(ww.mesh.upper_right) == [2.0, 1.0, 1.0]
+    assert ww.energy_bins == edges
+    assert ww.window((0.5, 0.5, 0.5), 10.0) == pytest.approx((0.5, 2.5))
+    assert ww.window((1.5, 0.5, 0.5), 1.0e6) == pytest.approx((0.2, 1.0))
+    assert ww.window((1.5, 0.5, 0.5), 10.0) is None  # no window in that voxel
+    assert ww.window((5.0, 0.5, 0.5), 10.0) is None  # outside the mesh
+    assert ww.window((0.5, 0.5, 0.5), 3.0e7) is None  # above the energy bins
+    single = yamc.WeightWindowBounds(mesh=mesh, lower_bounds=[0.5, 0.25], ratio=4.0)
+    assert single.energy_bins is None
+    assert single.window((1.5, 0.5, 0.5), 1.0e6) == pytest.approx((0.25, 1.0))
+
+    h5py = pytest.importorskip("h5py")
+    path = tmp_path / "windows.vtkhdf"
+    ww.to_vtkhdf(str(path))
+    with h5py.File(path, "r") as f:
+        root = f["VTKHDF"]
+        assert list(root.attrs["WholeExtent"]) == [0, 2, 0, 1, 0, 1]
+        cd = root["CellData"]
+        assert sorted(cd) == ["lower_bound_E0", "lower_bound_E1", "upper_bound_E0", "upper_bound_E1"]
+        lower0 = cd["lower_bound_E0"][...]
+        assert lower0.shape == (1, 1, 2)  # (nz, ny, nx)
+        assert lower0[0, 0, 0] == 0.5 and math.isnan(lower0[0, 0, 1])
+        assert math.isnan(cd["upper_bound_E0"][0, 0, 1])
+        assert list(cd["lower_bound_E1"][0, 0, :]) == [0.1, 0.2]
+        assert cd["lower_bound_E1"].attrs["energy_low_eV"] == 1.0e3
+        assert cd["lower_bound_E1"].attrs["energy_high_eV"] == 2.0e7
+    single.to_vtkhdf(str(path))
+    with h5py.File(path, "r") as f:
+        assert sorted(f["VTKHDF/CellData"]) == ["lower_bound", "upper_bound"]
+
+
 @requires_data
 def test_weight_windows_unbiased_and_reduce_deep_variance():
     mesh = _mesh()
@@ -276,19 +316,56 @@ def test_weight_window_stats():
     assert s["max_split_copies_per_history"] == s["split_budget"]
     assert s["split_copies"] >= s["split_events"] > 0
     assert s["particles"] >= s["histories"] + s["split_copies"]
-    assert s["weight_floor_kills"] == 0
+    assert s["weight_floor_roulettes"] == 0
     assert s["no_window"] == 0
 
-    # A floor above the deep windows kills particles there, which is counted.
+    # A floor above the deep windows plays roulette there, which is counted.
     s = run(ratio=5.0, weight_floor=1e-3)
-    assert s["weight_floor_kills"] > 0
-    assert s["weight_floor_weight"] > 0.0
+    assert s["weight_floor_roulettes"] > 0
+    assert 0 < s["weight_floor_kills"] <= s["weight_floor_roulettes"]
 
     # Energy bins above the 1 MeV source leave every collision without a window.
     s = run(ratio=5.0, energy_bins=[2e6, 2e7])
     assert s["checks"] == 0
     assert s["no_window"] > 0
     assert s["split_events"] == 0
+
+
+@requires_data
+def test_weight_window_warnings():
+    """Windows that cannot work as set are caught before any transport."""
+    mesh = yamc.RegularRectangularMesh(
+        lower_left=[-20, -20, 0], upper_right=[20, 20, 40], shape=[1, 1, 8]
+    )
+    mat = yamc.Material(composition={"Al27": 1.0}, density=2.7, temperature=294)
+    mat.read_nuclear_data({"Al27": str(AL27)})
+    cyl = yamc.Cylinder(axis="z", radius=20.0, boundary="vacuum")
+    z0 = yamc.Plane(axis="z", offset=0.0, boundary="vacuum")
+    z1 = yamc.Plane(axis="z", offset=40.0, boundary="vacuum")
+    cell = yamc.Cell(name="rod", region=cyl.below & z0.above & z1.below, material=mat)
+    geom = yamc.Geometry([cell])
+    src = yamc.NeutronSource(position=(0, 0, 0.5), energy=yamc.sources.Discrete([1.0e6], [1.0]))
+    tally = yamc.Tally(scores=["flux"], name="flux", mesh=mesh, particle="neutron")
+    good = [0.3 / 1.6**i for i in range(8)]  # falling about as the flux does
+
+    def warnings(**ww):
+        windows = [yamc.WeightWindowBounds(mesh=mesh, **ww)] if ww else []
+        model = yamc.Model(geometry=geom, source=src, tallies=[tally], variance_reduction=windows)
+        return " ".join(model.weight_window_warnings())
+
+    assert warnings() == ""
+    assert warnings(lower_bounds=good) == ""
+    assert "below the source weight" in warnings(lower_bounds=[x * 1e-3 for x in good])
+    assert "above the source weight" in warnings(lower_bounds=[x * 1e3 for x in good])
+    assert "energy bins end" in warnings(lower_bounds=good, energy_bins=[1e-5, 1e5])
+    assert "energy bins start" in warnings(lower_bounds=good, energy_bins=[2e6, 2e7])
+    assert "weight_floor" in warnings(lower_bounds=good, weight_floor=1e-1)
+
+    # Non-finite bounds and a window with no width are refused outright.
+    with pytest.raises(ValueError, match="finite"):
+        yamc.WeightWindowBounds(mesh=mesh, lower_bounds=[math.nan] + good[1:])
+    with pytest.raises(ValueError, match="above"):
+        yamc.WeightWindowBounds(mesh=mesh, lower_bounds=good, upper_bounds=good)
 
 
 def _degvr_rod_model():

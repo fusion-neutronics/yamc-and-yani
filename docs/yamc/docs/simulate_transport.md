@@ -10,7 +10,7 @@ results = model.simulate_transport()
 
 ``simulate_transport()`` returns a ``TransportResults`` object containing a ``TallyResult`` for every tally attached to the model, plus run metadata (``elapsed``, ``transport_time``, ``particles_per_second``, and ``runs``: per run the seed, ``n_histories``, the data libraries and the published release of each, ``data_releases``).
 
-A run stops on a particle budget (``total_particles``), a wall-time budget (``max_runtime``), or convergence targets on the model. They are OR-combined, so the run ends at the first one satisfied. ``total_particles`` defaults to ``None`` (no particle cap).
+A run stops on a particle budget (``total_particles``), a wall-time budget (``max_runtime``), or convergence targets on the model. They are OR-combined, so the run ends at the first one satisfied. ``total_particles`` defaults to ``None`` (no particle cap). ``results.stop_reason`` names the one that ended the run: ``"total_particles"``, ``"max_runtime"``, ``"convergence_targets"``, or ``"statistical_checks"`` when none was set (``None`` for GPU runs).
 
 With none of them set, the run goes on until it has converged (see [Running until converged](#running-until-converged)):
 
@@ -169,7 +169,8 @@ The GPU path supports a defined subset of the options, verified to match the CPU
 
 - Neutron transport, primary-photon transport (a `PhotonSource`), coupled neutron-to-photon secondary production (`transport_secondary_photons=True`) and D1S decay photons (`use_decay_photons=True`). D1S on a mixed neutron and photon source is rejected.
 - Tallies with either estimator: flux, heating / heating-local, damage-energy, reaction rates (total / elastic / absorption / (n,γ) / inelastic / fission), gas-production, and photon cross-section scores. Tally covariance (`covariance=True`) and virtual-overlay tallies (`response=`) are rejected.
-- Tally filters: `cells=`, `materials=`, `mesh=`, `energy_bins=`, `particle=`, `nuclides=`, `parent_nuclides=`, and `energy_function=` / `dose_coefficients=`. The energy function weights rather than bins, so it still needs a spatial binner alongside it; its interpolation table (cubic, linear or log-log) is built on the host and evaluated in the kernel, so cubic and linear match the CPU bit for bit and log-log to about an ulp.
+- Surface currents (`current-above`, `current-below`, `current-net` with `surfaces=`), for neutrons and photons, with `energy_bins=`, `particle=` and `energy_function=`. Each crossing is scored before a vacuum surface ends the particle, as on the CPU. `cosine_bins=` is rejected.
+- Tally filters: `cells=`, `materials=`, `mesh=`, `surfaces=`, `energy_bins=`, `particle=`, `nuclides=`, `parent_nuclides=`, and `energy_function=` / `dose_coefficients=`. The energy function weights rather than bins, so it still needs a spatial binner alongside it; its interpolation table (cubic, linear or log-log) is built on the host and evaluated in the kernel, so cubic and linear match the CPU bit for bit and log-log to about an ulp.
 - Full neutron physics: elastic (tabulated angular), inelastic (Kalbach-Mann, n-body, evaporation), free-gas thermal, URR, and the photon interactions on the photon path.
 - CSG geometry only (mesh is rejected), with every CSG surface type.
 - Survival biasing is supported. Weight windows are rejected, not silently ignored.
