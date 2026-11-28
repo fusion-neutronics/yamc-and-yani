@@ -3761,7 +3761,7 @@ impl Model {
                     if let Some(monitor) = bin_convergence.as_mut() {
                         let guards: Vec<_> = welford_workers.iter().map(|w| w.lock()).collect();
                         let done: u64 = guards.iter().map(|g| g.n_histories).sum();
-                        let status = monitor.checkpoint(guards.iter().map(|g| &**g), done, elapsed);
+                        let status = monitor.checkpoint(guards.iter().map(|g| &**g), done);
                         drop(guards);
                         let n_checks = settings.convergence.n_checks();
                         converged_streak = if status.converged {

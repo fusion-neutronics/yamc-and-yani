@@ -68,12 +68,11 @@ A run with no ``total_particles``, ``max_runtime`` or convergence targets stops 
 | relative error decreasing | ✓ | ✓ | ✓ |
 | relative error falls as 1/√N | ✓ | ✓ | ✓ |
 | figure of merit stable | ✓ | ✓ | ✓ |
-| figure of merit has no trend | ✓ | ✓ | ✓ |
 | variance of variance < 0.10 |  | ✓ | ✓ |
 | variance of variance decreasing |  | ✓ | ✓ |
 | variance of variance falls as 1/N |  | ✓ | ✓ |
 | large-score tail slope > 3 |  |  | ✓ |
-| **checks** | **6** | **9** | **10** |
+| **checks** | **5** | **8** | **9** |
 
 <!-- doctest: skip -->
 ```python
@@ -85,17 +84,17 @@ results = model.simulate_transport(convergence="strict")   # every check, every 
 Choosing a level:
 
 - ``"loose"`` uses only each bin's mean and error. It is the quickest, but a rarely sampled large score can leave the relative error looking settled while it is not.
-- ``"standard"`` adds the variance of the variance, which catches exactly that: an error estimate that is itself unreliable. It keeps two more numbers per bin per thread (16 bytes).
-- ``"strict"`` adds the tail slope of each bin's score distribution, which needs each bin's 201 largest scores: about 1.6 KiB per scored bin per thread. That is fine for cell and spectrum tallies; for a mesh of a million voxels on 16 threads it is about 26 GB.
+- ``"standard"`` adds the variance of the variance, which catches exactly that: an error estimate that is itself unreliable. It keeps two more numbers per bin per thread (16 bytes). When large scores are rare, as deep in a shield, it can still stop while the error is a little low: on synthetic scores where 1% of histories scored, 9% of the answers fell outside ±2 standard errors, against 5% for honest ones.
+- ``"strict"`` adds the tail slope of each bin's score distribution, which waits for those rare large scores: on the same scores it stopped about 35 times later, with every answer inside ±2 standard errors. It needs each bin's 201 largest scores: about 1.6 KiB per scored bin per thread. That is fine for cell and spectrum tallies; for a mesh of a million voxels on 16 threads it is about 26 GB.
 
 ``convergence=`` only applies when no other stop condition is set, and combining it with ``total_particles``, ``max_runtime`` or convergence targets raises ``ValueError``.
 
-The checks are made at checkpoints every ~25% more histories, and the progress output names the level and how many checks the slowest bin passes, with an ETA projected from the slowest bin:
+The checks read the tallies alone, never the clock, so a run with the same seed stops after the same number of histories on any machine and under any load. They are made at checkpoints every ~25% more histories, and a bin counts as converged only once the last half of its history holds seven of them, so the trend checks have enough points to catch a mean still moving; the earliest a run can stop is 3,721 histories, and the progress output names the level and how many checks the slowest bin passes, with an ETA projected from the slowest bin:
 
 ```text
-No stop condition set: running until every scored bin passes the standard statistical checks (9).
-Progress: 12500 particles  elapsed 1.2s, ETA ~3.4s (statistical checks 7/9 passing)
-Every scored bin passed the standard statistical checks (9) after 51046 particles; stopping.
+No stop condition set: running until every scored bin passes the standard statistical checks (8).
+Progress: 12500 particles  elapsed 1.2s, ETA ~3.4s (statistical checks 6/8 passing)
+Every scored bin passed the standard statistical checks (8) after 51046 particles; stopping.
 ```
 
 Converging every bin can take a long time, for example deep in a shield without variance reduction. When, after a minute, the ETA is more than ten times the time already spent, a warning names the slowest tally bin and its relative error. Cancel the run, add [weight windows](weight_windows.md), or set ``total_particles``, ``max_runtime`` or a ``ConvergenceTarget`` to stop sooner.

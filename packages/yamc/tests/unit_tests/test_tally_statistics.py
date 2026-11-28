@@ -88,7 +88,7 @@ def test_statistical_checks_verdict():
         c.variance_of_variance_ok,
         c.tail_slope_ok,
         c.mean_stable,
-        c.figure_of_merit_no_trend,
+        c.figure_of_merit_stable,
     ):
         assert value is None or isinstance(value, bool)
     assert isinstance(c.summary(), str)

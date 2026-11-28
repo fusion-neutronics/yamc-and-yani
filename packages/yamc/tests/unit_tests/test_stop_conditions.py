@@ -51,6 +51,18 @@ def test_no_stop_condition_runs_until_checks_pass():
     assert r.aggregate_variance_of_variance < 0.10
 
 
+def test_a_seeded_run_stops_at_the_same_point_on_any_thread_count():
+    # The checks read the tallies, never the clock, so how fast the run goes
+    # cannot move the stop: one thread or four, the same seed stops after the
+    # same histories with the same answer.
+    runs = [
+        _build_model().simulate_transport(seed=1, threads=threads)["tbr"]
+        for threads in (1, 4)
+    ]
+    assert runs[0].n_histories == runs[1].n_histories
+    assert runs[0].mean[0] == pytest.approx(runs[1].mean[0], rel=1e-12)
+
+
 @pytest.mark.parametrize("level", ["loose", "standard", "strict"])
 def test_every_convergence_level_stops(level):
     model = _build_model()

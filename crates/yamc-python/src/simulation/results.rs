@@ -594,6 +594,10 @@ impl PyStatisticalChecks {
     fn variance_of_variance_decreasing(&self) -> Option<bool> {
         self.inner.variance_of_variance_decreasing
     }
+    /// The figure of merit per history, ``1 / (R² N)``, within a factor of 2
+    /// over the last half of the run. On a machine doing nothing else this is
+    /// the wall-time figure of merit over a constant; judging it per history
+    /// gives the same histories the same verdict on any machine.
     #[getter]
     fn figure_of_merit_stable(&self) -> Option<bool> {
         self.inner.figure_of_merit_stable
@@ -607,12 +611,6 @@ impl PyStatisticalChecks {
     #[getter]
     fn variance_of_variance_rate_ok(&self) -> Option<bool> {
         self.inner.variance_of_variance_rate_ok
-    }
-    /// Figure of merit shows no systematic trend with ``N`` over the last half
-    /// of the run. ``None`` when that half spans under 0.1 s of wall time.
-    #[getter]
-    fn figure_of_merit_no_trend(&self) -> Option<bool> {
-        self.inner.figure_of_merit_no_trend
     }
     /// A plain-text pass / FAIL / n/a table.
     fn summary(&self) -> String {
@@ -643,6 +641,7 @@ impl PyStatisticalChecks {
         let c = &self.inner;
         let checks: [(&str, Option<bool>); 10] = [
             ("relative error", c.relative_error_ok),
+            ("per-bin relative error", c.per_bin_relative_error_ok),
             ("rel. error decreasing", c.relative_error_decreasing),
             ("rel. error falls as 1/√N", c.relative_error_rate_ok),
             ("variance of variance", c.variance_of_variance_ok),
@@ -651,7 +650,6 @@ impl PyStatisticalChecks {
             ("PDF tail slope", c.tail_slope_ok),
             ("mean stable", c.mean_stable),
             ("figure of merit stable", c.figure_of_merit_stable),
-            ("figure of merit no trend", c.figure_of_merit_no_trend),
         ];
         let rows: Vec<Vec<String>> = checks
             .iter()

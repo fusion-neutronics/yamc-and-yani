@@ -3660,12 +3660,12 @@ class Model:
                 results are statistically valid for the histories completed.
             convergence: Which statistical checks every scored bin of every
                 tally must pass before a run with no stop condition ends, each
-                level including the checks of the looser ones: ``'loose'`` (6:
+                level including the checks of the looser ones: ``'loose'`` (5:
                 relative error < 0.10, mean stable, relative error decreasing
-                and falling as 1/sqrt(N), figure of merit stable with no
-                trend), ``'standard'`` (9, the default: loose plus the variance
-                of the variance < 0.10, decreasing and falling as 1/N) or
-                ``'strict'`` (10: standard plus a large-score tail slope > 3;
+                and falling as 1/sqrt(N), figure of merit per history stable),
+                ``'standard'`` (8, the default: loose plus the variance of the
+                variance < 0.10, decreasing and falling as 1/N) or
+                ``'strict'`` (9: standard plus a large-score tail slope > 3;
                 about 1.6 KiB per scored bin per thread). Only valid with no
                 ``total_particles``, ``max_runtime`` or convergence targets.
             data_uncertainty: Nuclear-data uncertainty on every tally, as a
@@ -5413,7 +5413,13 @@ class StatisticalChecks:
     @property
     def variance_of_variance_decreasing(self) -> typing.Optional[builtins.bool]: ...
     @property
-    def figure_of_merit_stable(self) -> typing.Optional[builtins.bool]: ...
+    def figure_of_merit_stable(self) -> typing.Optional[builtins.bool]:
+        r"""
+        The figure of merit per history, ``1 / (R² N)``, within a factor of 2
+        over the last half of the run. On a machine doing nothing else this is
+        the wall-time figure of merit over a constant; judging it per history
+        gives the same histories the same verdict on any machine.
+        """
     @property
     def relative_error_rate_ok(self) -> typing.Optional[builtins.bool]:
         r"""
@@ -5423,12 +5429,6 @@ class StatisticalChecks:
     def variance_of_variance_rate_ok(self) -> typing.Optional[builtins.bool]:
         r"""
         Variance of the variance falling as ``1/N`` over the last half of the run.
-        """
-    @property
-    def figure_of_merit_no_trend(self) -> typing.Optional[builtins.bool]:
-        r"""
-        Figure of merit shows no systematic trend with ``N`` over the last half
-        of the run. ``None`` when that half spans under 0.1 s of wall time.
         """
     def summary(self) -> builtins.str:
         r"""

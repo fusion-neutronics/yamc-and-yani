@@ -1193,12 +1193,12 @@ impl PyModel {
     ///         results are statistically valid for the histories completed.
     ///     convergence: Which statistical checks every scored bin of every
     ///         tally must pass before a run with no stop condition ends, each
-    ///         level including the checks of the looser ones: ``'loose'`` (6:
+    ///         level including the checks of the looser ones: ``'loose'`` (5:
     ///         relative error < 0.10, mean stable, relative error decreasing
-    ///         and falling as 1/sqrt(N), figure of merit stable with no
-    ///         trend), ``'standard'`` (9, the default: loose plus the variance
-    ///         of the variance < 0.10, decreasing and falling as 1/N) or
-    ///         ``'strict'`` (10: standard plus a large-score tail slope > 3;
+    ///         and falling as 1/sqrt(N), figure of merit per history stable),
+    ///         ``'standard'`` (8, the default: loose plus the variance of the
+    ///         variance < 0.10, decreasing and falling as 1/N) or
+    ///         ``'strict'`` (9: standard plus a large-score tail slope > 3;
     ///         about 1.6 KiB per scored bin per thread). Only valid with no
     ///         ``total_particles``, ``max_runtime`` or convergence targets.
     ///     data_uncertainty: Nuclear-data uncertainty on every tally, as a
