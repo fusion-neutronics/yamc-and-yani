@@ -5928,8 +5928,9 @@ class Tally:
                 A surface tally takes ``energy_bins`` (the crossing energy),
                 ``cosine_bins``, ``particle`` and an energy function, and no cells,
                 materials, mesh, nuclides, response or estimator. It needs surface
-                tracking (not ``"woodcock"`` or ``"hybrid"``) and CSG surfaces, and
-                runs on the CPU. Units are particles per source particle.
+                tracking (not ``"woodcock"`` or ``"hybrid"``) and CSG surfaces. It
+                also runs with ``compute="gpu"``, except with ``cosine_bins``. Units
+                are particles per source particle.
             cosine_bins (list[float], optional): Bin a surface tally by the cosine of
                 the angle between the particle's direction and the surface normal at
                 the crossing, the normal pointing to ``.above`` (outwards on a
@@ -8582,12 +8583,15 @@ class WeightWindowBounds:
     @property
     def lower_bounds(self) -> builtins.list[builtins.float]:
         r"""
-        Lower window bounds, flat over (group, voxel).
+        Lower window bounds, flat over (group, voxel): index
+        ``group * mesh.num_bins + voxel``, with ``voxel = (iz * ny + iy) * nx +
+        ix``, so ``numpy.reshape(lower_bounds, (n_groups, nz, ny, nx))`` lays
+        them out on the mesh. A negative bound marks a voxel without a window.
         """
     @property
     def upper_bounds(self) -> builtins.list[builtins.float]:
         r"""
-        Upper window bounds, flat over (group, voxel).
+        Upper window bounds, laid out as ``lower_bounds``.
         """
     @property
     def particle(self) -> builtins.str:
@@ -8610,8 +8614,31 @@ class WeightWindowBounds:
         Absolute weight below which a particle plays roulette, the floor being
         its survivor weight.
         """
+    @property
+    def mesh(self) -> RegularRectangularMesh:
+        r"""
+        The mesh the windows are defined on.
+        """
+    @property
+    def energy_bins(self) -> typing.Optional[builtins.list[builtins.float]]:
+        r"""
+        Energy group edges in eV, or ``None`` for one group spanning all
+        energies.
+        """
     def __new__(cls, mesh: RegularRectangularMesh, lower_bounds: typing.Sequence[builtins.float], upper_bounds: typing.Optional[typing.Sequence[builtins.float]] = None, ratio: builtins.float = 5.0, energy_bins: typing.Optional[typing.Sequence[builtins.float]] = None, particle: builtins.str = 'neutron', survival_factor: builtins.float = 3.0, max_split: builtins.int = 10, weight_floor: builtins.float = 1e-38) -> WeightWindowBounds: ...
+    def window(self, position: typing.Sequence[builtins.float], energy: builtins.float) -> typing.Optional[tuple[builtins.float, builtins.float]]:
+        r"""
+        The window a particle at ``position`` with ``energy`` gets, as
+        ``(lower, upper)``, or ``None`` where it gets none: outside the mesh or
+        the energy bins, or in a voxel without a window.
+        
+        Args:
+            position: ``(x, y, z)`` in cm.
+            energy: Energy in eV.
+        """
     def __repr__(self) -> builtins.str: ...
+    def to_vtkhdf(self, filename: builtins.str, *, length_units: typing.Literal["mm", "cm", "m", "km"] = "cm") -> None:
+        r"""Write the lower and upper bounds to a VTK-HDF ImageData file for ParaView, one pair of arrays per energy group, NaN where a voxel has no window. Requires h5py (pip install yamc[viz])."""
 
 @typing.final
 class WeightWindowGeneratorDeGVR:
@@ -9508,7 +9535,8 @@ def generate_library(keyword: builtins.str, path: builtins.str, *, parts: typing
     ----------
     keyword : str
         The library: ``"endf-b8.1"``, ``"jeff-4.0"``, ``"jendl-5.0"``,
-        ``"tendl-2025"``, ``"tendl-2017"``, ``"fendl-3.2d"`` or ``"irdff-ii"``.
+        ``"tendl-2025"``, ``"tendl-2017"``, ``"fendl-3.2d"``, ``"irdff-ii"``,
+        ``"ukdd-2012"``, ``"ukdd-2020"`` or ``"ukfy-4.2"``.
     path : str
         The folder to build in, created if absent. It must be new, empty or an
         earlier build of the same library, and not inside :func:`cache_dir`.
@@ -9977,6 +10005,9 @@ def set_transmutation_decay_data(value: typing.Optional[builtins.str]) -> None:
     Every transmutation and decay quantity (activity, decay heat, dose) reads
     it, and there is no default library, so one with it unset is refused
     before any work, naming the setting. Pass ``None`` to unset it.
+    
+    ``"ukdd-2012"`` and ``"ukdd-2020"``, UKAEA's decay_2012 and decay_2020,
+    supply decay data only, so this is the one setting that takes them.
     """
 
 def set_transmutation_fission_yields(value: typing.Optional[builtins.str | typing.Literal[False]]) -> None:
@@ -9986,6 +10017,8 @@ def set_transmutation_fission_yields(value: typing.Optional[builtins.str | typin
     Pass a library keyword or a path to choose one. An irradiation reads it,
     and there is no default library, so one with it unset is refused before
     any work, naming the setting. Pass ``None`` to unset it.
+    ``"ukfy-4.2"``, the UKFY-4.2 neutron-induced yields, supplies fission
+    yields only, so this is the one setting that takes it.
     
     Pass ``False`` to turn the subsection off, which is the honest setting for
     a material nothing in which fissions and for a library that publishes no
